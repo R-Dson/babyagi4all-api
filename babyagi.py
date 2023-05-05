@@ -22,12 +22,10 @@ INSTANCE_NAME = os.getenv("INSTANCE_NAME", os.getenv("BABY_NAME", "BabyAGI"))
 COOPERATIVE_MODE = "none"
 JOIN_EXISTING_OBJECTIVE = False
 
-# Goal configuation
-OBJECTIVE = os.getenv("OBJECTIVE", "")
-INITIAL_TASK = os.getenv("INITIAL_TASK", os.getenv("FIRST_TASK", ""))
-
 # Model configuration
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.2))
+MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", 256))
+MAX_TASKS = int(os.getenv("MAX_TASKS", 10))
 
 VERBOSE = (os.getenv("VERBOSE", "false").lower() == "true")
 CTX_MAX = 16384
@@ -35,27 +33,20 @@ CTX_MAX = 16384
 API_HOST = os.getenv("API_HOST")
 API_PORT = os.getenv("API_PORT")
 
-# Extensions support begin
-
-def can_import(module_name):
-    try:
-        importlib.import_module(module_name)
-        return True
-    except ImportError:
-        return False
+# Goal configuation
+OBJECTIVE = os.getenv("OBJECTIVE", "")
+OBJECTIVE_SPLIT_TASK = f"""Develop a list of tasks to complete in order to attain the objective. The list should have at most {MAX_TASKS} items and should be written in the order that the tasks need to be completed. The list should be comprehensive, meaning no other tasks would be required to attain the objective. Respond with a numbered list of these tasks and nothing else. If the objective can be completed in one task, it is fine for the list to be of length 1."""
 
 print("\033[95m\033[1m"+"\n*****CONFIGURATION*****\n"+"\033[0m\033[0m")
 print(f"Name  : {INSTANCE_NAME}")
 
 # Check if we know what we are doing
 assert OBJECTIVE, "\033[91m\033[1m" + "OBJECTIVE environment variable is missing from .env" + "\033[0m\033[0m"
-assert INITIAL_TASK, "\033[91m\033[1m" + "INITIAL_TASK environment variable is missing from .env" + "\033[0m\033[0m"
-
 
 print("\033[94m\033[1m" + "\n*****OBJECTIVE*****\n" + "\033[0m\033[0m")
 print(f"{OBJECTIVE}")
 
-if not JOIN_EXISTING_OBJECTIVE: print("\033[93m\033[1m" + "\nInitial task:" + "\033[0m\033[0m" + f" {INITIAL_TASK}")
+if not JOIN_EXISTING_OBJECTIVE: print("\033[93m\033[1m" + "\nInitial task:" + "\033[0m\033[0m" + f" {OBJECTIVE_SPLIT_TASK}")
 else: print("\033[93m\033[1m" + f"\nJoining to help the objective" + "\033[0m\033[0m")
 
 # Results storage using local ChromaDB
@@ -149,14 +140,14 @@ class SingleTaskListStorage:
 # Initialize tasks storage
 tasks_storage = SingleTaskListStorage()
 
-def ooba_call(prompt: str, temperature: float = TEMPERATURE, max_tokens: int = 256):
+def ooba_call(prompt: str):
     URI=f'{API_HOST}:{API_PORT}/api/v1/generate'
 
     request = {
         'prompt': prompt[:CTX_MAX],
-        'max_new_tokens': max_tokens,
+        'max_new_tokens': MAX_NEW_TOKENS,
         'do_sample': True,
-        'temperature': temperature,
+        'temperature': TEMPERATURE,
         'top_p': 0.1,
         'typical_p': 1,
         'repetition_penalty': 1.18,
@@ -214,10 +205,11 @@ def task_creation_agent(
     objective: str, result: Dict, task_description: str, task_list: List[str]
 ):    
     prompt = f"""
-    Your objective: {objective}\n
-    Take into account these previously completed tasks but don't repeat them: {task_list}.\n
-    The last completed task has the result: {result["data"]}.\n
-    Develop a task list based on the result.\n
+    Your objective is: {objective}\n
+    You have already completed these tasks, do not repeat them: {task_list}\n
+    The last task you completed has the result: {result["data"]}\n
+    Based on this result and the tasks already completed, please create a list of remaining tasks to complete for the purpose of attaining your objective.\n
+    Return the result as a numbered list with no formatting. Do not ask any clarifying questions or include any text besides the task list. Do not repeat tasks you have already completed.\n
     Response:"""
 
     prompt = fix_prompt(prompt)
@@ -242,10 +234,14 @@ def prioritization_agent():
     next_task_id = tasks_storage.next_task_id()    
 
     prompt = f"""
-    Please prioritize, summarize and consolidate the following tasks: {task_names}.\n
-    Consider the ultimate objective: {OBJECTIVE}.\n
-    Return the result as a numbered list.
-    """
+    Your ultimate objective is: {OBJECTIVE}\n
+    In order to attain this objective, you have the following tasks to complete: {task_names}\n
+    Take this task list and perform the following actions:\n
+    1. Reorder the task list so that tasks that need to be completed before other tasks come first.\n
+    2. Summarize each item in the reordered task list.\n
+    3. Consolidate the reordered, summarized task list so that there are no repeated tasks and so that there are at most {MAX_TASKS} tasks in the list.\n
+    4. Return the reordered, summarized, consolidated task list as a numbered list with no formatting. Do not ask any clarifying questions or include any text besides the new task list.\n
+    Response:"""
 
     prompt = fix_prompt(prompt)
 
@@ -280,9 +276,9 @@ def execution_agent(objective: str, task: str) -> str:
 
     """
     
-    context = context_agent(query=objective, top_results_num=5)
+    context = context_agent(query=objective, top_results_num=MAX_TASKS)
 
-    context_list = [t['task_name'] for t in context if t['task_name'] != INITIAL_TASK]
+    context_list = [t['task_name'] for t in context if t['task_name'] != OBJECTIVE_SPLIT_TASK]
     #context_list = [t['task_name'] for t in context]
 
     # remove duplicates
@@ -292,15 +288,18 @@ def execution_agent(objective: str, task: str) -> str:
         print("\n*******RELEVANT CONTEXT******\n")
         print(context_list)
 
-    if task == INITIAL_TASK:
+    if task == OBJECTIVE_SPLIT_TASK:
         prompt = f"""
-        You are an AI who performs one task based on the following objective: {objective}.\n
-        Your task: {task}\nResponse:"""
+        Your objective is: {objective}\n
+        Please complete the following task: {task}\n
+        Do not ask any clarifying questions or respond with anything besides what the task specifically asks for.\n
+        Response:"""
     else:
         prompt = f"""
-        Your objective: {objective}.\n
-        Take into account these previously completed tasks but don't repeat them: {context_list}.\n
-        Your task: {task}\n
+        Your objective is: {objective}\n
+        Please complete the following task: {task}\n
+        You have already completed the following tasks, take them into account as you complete the task but do not repeat them: {context_list}\n
+        Do not ask any clarifying questions or respond with anything besides what the task specifically asks for.\n
         Response:"""
 
     #Give an advice how to achieve your task!\n
@@ -336,11 +335,11 @@ def context_agent(query: str, top_results_num: int):
 if not JOIN_EXISTING_OBJECTIVE:
     initial_task = {
         "task_id": tasks_storage.next_task_id(),
-        "task_name": INITIAL_TASK
+        "task_name": OBJECTIVE_SPLIT_TASK
     }
     tasks_storage.append(initial_task)
 
-def main ():
+def main():
     while True:
         # As long as there are tasks in the storage...
         if not tasks_storage.is_empty():
@@ -389,7 +388,7 @@ def main ():
             if not JOIN_EXISTING_OBJECTIVE: prioritization_agent()
 
             # Sleep a bit before checking the task list again
-            time.sleep(5) 
+            time.sleep(1)
 
         else:
             print ("Ready, no more tasks.")
