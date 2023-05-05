@@ -3,34 +3,22 @@
 A small autonomous AI agent based on [BabyAGI](https://github.com/yoheinakajima/babyagi) by Yohei Nakajima.
 </br>
 
-Runs on CPU with the [GPT4All](https://github.com/nomic-ai/gpt4all) model by Nomic AI.
+Originally made to work with GPT4ALL on CPU by kroll-software [here](https://github.com/kroll-software/babyagi4all). This is a small fork to make it compatible with the API from [oobabooga's web interface](https://github.com/oobabooga/text-generation-webui).
 </br>
 
 100% open source, 100% local, no API-keys needed.
 </br>
 
 # Installation:
+Prerequisite: Install https://github.com/oobabooga/text-generation-webui.
 
 1. Clone this repository
 2. Install the requirements: *pip install -r requirements.txt*
-3. Download a model file (see below)
-4. Copy the file *.env.example* to *.env*
-4. Edit the model-path and other preferences in the file *.env*
+3. Edit the file .env to reflect your host name, port, and desired goal for the agent. There are other parameters as well.
 
-## Model Downloads
-
-The following model files have been tested successfully:
-
-* *gpt4all-lora-quantized-ggml.bin*
-* *ggml-wizardLM-7B.q4_2.bin*
-* *ggml-vicuna-7b-1.1-q4_2.bin*
-
-Some of these model files can be downloaded from [here](https://github.com/nomic-ai/gpt4all-chat#manual-download-of-models).
-</br>
-</br>
+Now, start up oobabooga's ui with the --api option. It should be listening on host "localhost" and port "5000" by default, meaning if you haven't changed anything about the config, you probably don't have to change those fields in .env.
 
 Then run *python babyagi.py*
 </br>
 
-Have fun!
-</br>
+Seriously all credits to kroll-software, all I did was plug it into Ooba's api :)
