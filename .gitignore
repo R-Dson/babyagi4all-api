@@ -2,18 +2,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-.env
-.env.*
-env/
-.venv
-*venv/
-
-.vscode/
-.idea/
-
-models
-llama/
-
 # for node
 chroma/
 node_modules/
