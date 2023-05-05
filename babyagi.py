@@ -292,14 +292,14 @@ def execution_agent(objective: str, task: str) -> str:
         prompt = f"""
         Your objective is: {objective}\n
         Please complete the following task: {task}\n
-        Do not ask any clarifying questions or respond with anything besides what the task specifically asks for.\n
+        Do not ask any clarifying questions.\n
         Response:"""
     else:
         prompt = f"""
         Your objective is: {objective}\n
         Please complete the following task: {task}\n
         You have already completed the following tasks, take them into account as you complete the task but do not repeat them: {context_list}\n
-        Do not ask any clarifying questions or respond with anything besides what the task specifically asks for.\n
+        Do not ask any clarifying questions.\n
         Response:"""
 
     #Give an advice how to achieve your task!\n
