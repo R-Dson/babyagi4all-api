@@ -8,13 +8,10 @@ import chromadb
 from dotenv import load_dotenv
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.utils.embedding_functions import InstructorEmbeddingFunction
-from llama_cpp import Llama
+import requests
 
 # Load default environment variables (.env)
 load_dotenv()
-
-# Engine configuration
-LLM_MODEL = "GPT4All"
 
 # Table config
 RESULTS_STORE_NAME = os.getenv("RESULTS_STORE_NAME", os.getenv("TABLE_NAME", ""))
@@ -33,6 +30,10 @@ INITIAL_TASK = os.getenv("INITIAL_TASK", os.getenv("FIRST_TASK", ""))
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.2))
 
 VERBOSE = (os.getenv("VERBOSE", "false").lower() == "true")
+CTX_MAX = 16384
+
+API_HOST = os.getenv("API_HOST")
+API_PORT = os.getenv("API_PORT")
 
 # Extensions support begin
 
@@ -45,30 +46,11 @@ def can_import(module_name):
 
 print("\033[95m\033[1m"+"\n*****CONFIGURATION*****\n"+"\033[0m\033[0m")
 print(f"Name  : {INSTANCE_NAME}")
-print(f"Mode  : {'alone' if COOPERATIVE_MODE in ['n', 'none'] else 'local' if COOPERATIVE_MODE in ['l', 'local'] else 'distributed' if COOPERATIVE_MODE in ['d', 'distributed'] else 'undefined'}")
-print(f"LLM   : {LLM_MODEL}")
 
 # Check if we know what we are doing
 assert OBJECTIVE, "\033[91m\033[1m" + "OBJECTIVE environment variable is missing from .env" + "\033[0m\033[0m"
 assert INITIAL_TASK, "\033[91m\033[1m" + "INITIAL_TASK environment variable is missing from .env" + "\033[0m\033[0m"
 
-MODEL_PATH = os.getenv("MODEL_PATH", "models/gpt4all-lora-quantized-ggml.bin")
-    
-print(f"GPT4All : {MODEL_PATH}" + "\n")
-assert os.path.exists(MODEL_PATH), "\033[91m\033[1m" + f"Model can't be found." + "\033[0m\033[0m"
-
-#CTX_MAX = 2048
-#CTX_MAX = 8192
-CTX_MAX = 16384
-#THREADS_NUM = 16
-THREADS_NUM = 4
-
-llm = Llama(
-    model_path=MODEL_PATH,
-    n_ctx=CTX_MAX, n_threads=THREADS_NUM,
-    use_mlock=True,
-    verbose=False,
-)
 
 print("\033[94m\033[1m" + "\n*****OBJECTIVE*****\n" + "\033[0m\033[0m")
 print(f"{OBJECTIVE}")
@@ -167,9 +149,38 @@ class SingleTaskListStorage:
 # Initialize tasks storage
 tasks_storage = SingleTaskListStorage()
 
-def gpt_call(prompt: str, temperature: float = TEMPERATURE, max_tokens: int = 256):
-    result = llm(prompt[:CTX_MAX], echo=True, temperature=temperature, max_tokens=max_tokens)
-    return result['choices'][0]['text'][len(prompt):].strip()
+def ooba_call(prompt: str, temperature: float = TEMPERATURE, max_tokens: int = 256):
+    URI=f'{API_HOST}:{API_PORT}/api/v1/generate'
+
+    request = {
+        'prompt': prompt[:CTX_MAX],
+        'max_new_tokens': max_tokens,
+        'do_sample': True,
+        'temperature': temperature,
+        'top_p': 0.1,
+        'typical_p': 1,
+        'repetition_penalty': 1.18,
+        'top_k': 40,
+        'min_length': 0,
+        'no_repeat_ngram_size': 0,
+        'num_beams': 1,
+        'penalty_alpha': 0,
+        'length_penalty': 1,
+        'early_stopping': False,
+        'seed': -1,
+        'add_bos_token': True,
+        'truncation_length': 2048,
+        'ban_eos_token': False,
+        'skip_special_tokens': True,
+        'stopping_strings': []
+    }
+
+    response = requests.post(URI, json=request)
+
+    if response.status_code == 200:
+        return response.json()['results'][0]['text']
+    else:
+        print("Something went wrong accessing api")
 
 def strip_numbered_list(nl: List[str]) -> List[str]:
     result_list = []
@@ -211,7 +222,7 @@ def task_creation_agent(
 
     prompt = fix_prompt(prompt)
 
-    response = gpt_call(prompt)
+    response = ooba_call(prompt)
     pos = response.find("1")
     if (pos > 0):
         response = response[pos - 1:]
@@ -238,7 +249,7 @@ def prioritization_agent():
 
     prompt = fix_prompt(prompt)
 
-    response = gpt_call(prompt)
+    response = ooba_call(prompt)
     pos = response.find("1")
     if (pos > 0):
         response = response[pos - 1:]
@@ -296,7 +307,7 @@ def execution_agent(objective: str, task: str) -> str:
 
     prompt = fix_prompt(prompt)
 
-    result = gpt_call(prompt)
+    result = ooba_call(prompt)
     pos = result.find("1")
     if (pos > 0):
         result = result[pos - 1:]
