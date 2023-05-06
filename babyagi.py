@@ -35,7 +35,7 @@ API_PORT = os.getenv("API_PORT")
 
 # Goal configuation
 OBJECTIVE = os.getenv("OBJECTIVE", "")
-OBJECTIVE_SPLIT_TASK = f"""Develop a list of tasks to complete in order to attain the objective. The list should have at most {MAX_TASKS} items and should be written in the order that the tasks need to be completed. The list should be comprehensive, meaning no other tasks would be required to attain the objective. Respond with a numbered list of these tasks and nothing else. If the objective can be completed in one task, it is fine for the list to be of length 1."""
+OBJECTIVE_SPLIT_TASK = f"""Develop a list of tasks to complete in order to attain the objective."""
 
 print("\033[95m\033[1m"+"\n*****CONFIGURATION*****\n"+"\033[0m\033[0m")
 print(f"Name  : {INSTANCE_NAME}")
@@ -209,8 +209,7 @@ def task_creation_agent(
     You have already completed these tasks, do not repeat them: {task_list}\n
     The last task you completed has the result: {result["data"]}\n
     Based on this result and the tasks already completed, please create a list of remaining tasks to complete for the purpose of attaining your objective.\n
-    Return the result as a numbered list with no formatting. Do not ask any clarifying questions or include any text besides the task list. Do not repeat tasks you have already completed.\n
-    Response:"""
+    Respond with the task list as a numbered list. Don't say anything else.\nResponse:"""
 
     prompt = fix_prompt(prompt)
 
@@ -240,8 +239,7 @@ def prioritization_agent():
     1. Reorder the task list so that tasks that need to be completed before other tasks come first.\n
     2. Summarize each item in the reordered task list.\n
     3. Consolidate the reordered, summarized task list so that there are no repeated tasks and so that there are at most {MAX_TASKS} tasks in the list.\n
-    4. Return the reordered, summarized, consolidated task list as a numbered list with no formatting. Do not ask any clarifying questions or include any text besides the new task list.\n
-    Response:"""
+    4. Respond with the reordered, summarized, consolidated task list as a numbered list.\nResponse:"""
 
     prompt = fix_prompt(prompt)
 
@@ -292,15 +290,13 @@ def execution_agent(objective: str, task: str) -> str:
         prompt = f"""
         Your objective is: {objective}\n
         Please complete the following task: {task}\n
-        Do not ask any clarifying questions.\n
-        Response:"""
+        Do not ask any clarifying questions.\nResponse:"""
     else:
         prompt = f"""
         Your objective is: {objective}\n
         Please complete the following task: {task}\n
         You have already completed the following tasks, take them into account as you complete the task but do not repeat them: {context_list}\n
-        Do not ask any clarifying questions.\n
-        Response:"""
+        Do not ask any clarifying questions.\nResponse:"""
 
     #Give an advice how to achieve your task!\n
 
