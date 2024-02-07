@@ -63,7 +63,7 @@ class DefaultResultsStorage:
         )
 
         metric = "cosine"
-        embedding_function = InstructorEmbeddingFunction()
+        embedding_function = InstructorEmbeddingFunction(model_name='hkunlp/instructor-base', device='cuda')
         self.collection = chroma_client.get_or_create_collection(
             name=RESULTS_STORE_NAME,
             metadata={"hnsw:space": metric},
@@ -141,7 +141,7 @@ class SingleTaskListStorage:
 tasks_storage = SingleTaskListStorage()
 
 def ooba_call(prompt: str):
-    URI=f'{API_HOST}:{API_PORT}/api/v1/generate'
+    URI=f'{API_HOST}:{API_PORT}/v1/completions'
 
     request = {
         'prompt': prompt[:CTX_MAX],
@@ -163,13 +163,14 @@ def ooba_call(prompt: str):
         'truncation_length': 2048,
         'ban_eos_token': False,
         'skip_special_tokens': True,
-        'stopping_strings': []
+        'stopping_strings': [],
+        "max_tokens": MAX_NEW_TOKENS
     }
 
     response = requests.post(URI, json=request)
 
     if response.status_code == 200:
-        return response.json()['results'][0]['text']
+        return response.json()['choices'][0]['text']
     else:
         print("Something went wrong accessing api")
 
