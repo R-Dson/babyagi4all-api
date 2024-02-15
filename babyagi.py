@@ -3,12 +3,12 @@ import time
 import logging
 from collections import deque
 from typing import Dict, List
-import importlib
 import chromadb
 from dotenv import load_dotenv
-from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.utils.embedding_functions import InstructorEmbeddingFunction
 import requests
+import ooba_web
+import re
 
 # Load default environment variables (.env)
 load_dotenv()
@@ -35,7 +35,8 @@ API_PORT = os.getenv("API_PORT")
 
 # Goal configuation
 OBJECTIVE = os.getenv("OBJECTIVE", "")
-OBJECTIVE_SPLIT_TASK = f"""Develop a list of tasks to complete in order to attain the objective."""
+OBJECTIVE_SPLIT_TASK = f"""Develop a concise list of essential tasks to complete in order to attain the objective."""
+#OBJECTIVE_SPLIT_TASK = f"Develop a list of essential tasks to complete in order to attain the objective. Ensure each task contributes directly to achieving the objective and that the list is as concise as possible."
 
 print("\033[95m\033[1m"+"\n*****CONFIGURATION*****\n"+"\033[0m\033[0m")
 print(f"Name  : {INSTANCE_NAME}")
@@ -140,12 +141,11 @@ class SingleTaskListStorage:
 # Initialize tasks storage
 tasks_storage = SingleTaskListStorage()
 
-def ooba_call(prompt: str):
+def ooba_call(prompt: str, history: list[dict] = []) -> str:
     URI=f'{API_HOST}:{API_PORT}/v1/completions'
-
+    
     request = {
         'prompt': prompt[:CTX_MAX],
-        'max_new_tokens': MAX_NEW_TOKENS,
         'do_sample': True,
         'temperature': TEMPERATURE,
         'top_p': 0.1,
@@ -166,11 +166,27 @@ def ooba_call(prompt: str):
         'stopping_strings': [],
         "max_tokens": MAX_NEW_TOKENS
     }
+    # TODO: Maybe use the /chat/completions instead to use preset and character?
 
-    response = requests.post(URI, json=request)
+    """request = {
+        "messages": history,
+        'preset': 'simple-1',
+        'temperature': TEMPERATURE,
+        "max_tokens": MAX_NEW_TOKENS,
+        "character": "Assistant",
+        'top_k': 40,
+        "mode": "instruct",
+        "frequency_penalty": 1.18
+    }"""
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    response = requests.post(URI, headers=headers, json=request)
 
     if response.status_code == 200:
-        return response.json()['choices'][0]['text']
+        c = response.json()
+        return c['choices'][0]['text']#['message']['content']
     else:
         print("Something went wrong accessing api")
 
@@ -207,10 +223,10 @@ def task_creation_agent(
 ):    
     prompt = f"""
     Your objective is: {objective}\n
-    You have already completed these tasks, do not repeat them: {task_list}\n
+    You have already completed these tasks, do not repeat them: {task_list if task_list else "None"}\n
     The last task you completed has the result: {result["data"]}\n
-    Based on this result and the tasks already completed, please create a list of remaining tasks to complete for the purpose of attaining your objective.\n
-    Respond with the task list as a numbered list. Don't say anything else.\nResponse:"""
+    Based on this result and the tasks already completed, please create a list of remaining essential tasks to complete for the purpose of attaining your objective.\n
+    Respond with the task list as a numbered list. Don't say anything else. No unnecessary steps. \nResponse:"""
 
     prompt = fix_prompt(prompt)
 
@@ -234,14 +250,22 @@ def prioritization_agent():
     next_task_id = tasks_storage.next_task_id()    
 
     prompt = f"""
-    Your ultimate objective is: {OBJECTIVE}\n
-    In order to attain this objective, you have the following tasks to complete: {task_names}\n
-    Take this task list and perform the following actions:\n
-    1. Reorder the task list so that tasks that need to be completed before other tasks come first.\n
-    2. Summarize each item in the reordered task list.\n
-    3. Consolidate the reordered, summarized task list so that there are no repeated tasks and so that there are at most {MAX_TASKS} tasks in the list.\n
-    4. Respond with the reordered, summarized, consolidated task list as a numbered list.\nResponse:"""
+        Your ultimate objective is: {OBJECTIVE}
 
+        To achieve this objective, you have the following tasks to complete: {task_names}
+
+        Take this task list and perform the following actions:
+
+        1. Reorder the task list so that tasks that need to be completed before other tasks come first.
+        2. Summarize each item in the reordered task list.
+        3. Consolidate the reordered, summarized task list so that there are no repeated tasks and so that there are at most {MAX_TASKS} tasks in the list.
+        4. Respond with the reordered, summarized, consolidated task list as a numbered list.
+
+        Please provide the revised task list as a numbered list. Do not include any additional information.
+
+        Response:
+    """
+    
     prompt = fix_prompt(prompt)
 
     response = ooba_call(prompt)
@@ -262,7 +286,7 @@ def prioritization_agent():
 
 
 # Execute a task based on the objective and five previous tasks
-def execution_agent(objective: str, task: str) -> str:
+def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
     """
     Executes a task based on the given objective and previous context.
 
@@ -292,23 +316,106 @@ def execution_agent(objective: str, task: str) -> str:
         Your objective is: {objective}\n
         Please complete the following task: {task}\n
         Do not ask any clarifying questions.\nResponse:"""
-    else:
+        
+    else:  
         prompt = f"""
-        Your objective is: {objective}\n
-        Please complete the following task: {task}\n
-        You have already completed the following tasks, take them into account as you complete the task but do not repeat them: {context_list}\n
-        Do not ask any clarifying questions.\nResponse:"""
+            Your objective: {OBJECTIVE}
 
-    #Give an advice how to achieve your task!\n
+            Your current task is: {task}
 
+            {"You have already completed the following tasks, take them into account as you complete the task but do not repeat them: " + str(context_list) if len(context_list)>0 else ""}
+
+            1. Determine if the task involves fact checking or information gathering.
+            2. If the task involves facts, fact checking, or information gathering, respond with a newly generated search string for the task and place the string between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
+            3. If the task does not involve fact checking or information gathering, respond with the completed task.
+
+            Do not ask any clarifying questions. Do not clarify your reasoning.
+
+            Response:
+        """
     prompt = fix_prompt(prompt)
+    result = ooba_call(prompt, history)
 
-    result = ooba_call(prompt)
-    pos = result.find("1")
-    if (pos > 0):
-        result = result[pos - 1:]
+    if task == OBJECTIVE_SPLIT_TASK:
+        pos = result.find("1")
+        if (pos > 0):
+            result = result[pos - 1:]
     return result
 
+def search_agent(task, query: str, search_results: list) -> str:
+    """
+    TODO
+    """
+
+    prompt = (
+        f'Your current task is: "{task}".\n ## Search Results for: "{query}"\n'
+        "Please review the following search results carefully and select the index of the single webpage that best addresses the task."
+        "\n\n"
+    ) + "\n\n".join(
+        f"Index number: {r+1} \"{search_results[r]['title']}\"\n"
+        f"**URL:** {search_results[r]['url']}  \n"
+        f"Exerpt: {search_results[r]['exerpt']}\n"
+        for r in range(len(search_results))
+    ) + "\n\nRespond with the index of the single webpage that best addresses the task:"
+
+    prompt = ooba_web.safe_google_results(prompt)
+    prompt = fix_prompt(prompt)
+
+    return ooba_call(prompt)
+
+def search_extract_agent(task: str, search_query: str, block_text: str) -> str:
+    max_length = 400 # TODO: find a good max value
+    prompt = f"""
+        Objective: {OBJECTIVE}
+
+        Task: {task}
+
+        Search Query: {search_query}
+
+        Block Text:
+        {block_text[:max_length]}
+
+        Extract the relevant information from the block text to complete the task. Consider the following guidelines:
+        1. Identify key points or details related to the task.
+        2. Summarize the information in a concise manner.
+        3. Ensure that the extracted information directly addresses the objective and task provided.
+
+        Provide your response based on the extracted information:
+
+        Response:
+    """
+    prompt = fix_prompt(prompt)
+    return ooba_call(prompt)
+
+def updated_result_agent(task: str, initial_answer: str, new_search_results: list[tuple]) -> str:
+
+    prompt = f"""
+        Overall Objective: {OBJECTIVE}
+
+        Task: {task}
+
+        Initial answer to the task {initial_answer}
+
+        New Search Results:
+    """
+
+    for search_query, search_result in new_search_results:
+        prompt += f"\n\nSearch Query: {search_query}\nSearch Result:\n{search_result}"
+
+    prompt += f"""
+
+    Instructions:
+    1. Review the initial search results and the new information obtained from the additional searches.
+    2. Consider how the new data alters or enhances the understanding of the task.
+    3. Based on the updated information, provide a revised answer to the task.
+    4. Ensure that your response is relevant to the overall objective and accurately addresses the task.
+
+    Provide your response based on the updated information:
+
+    Response:
+    """
+    prompt = fix_prompt(prompt)
+    return ooba_call(prompt)
 
 # Get the top n completed tasks for the objective
 def context_agent(query: str, top_results_num: int):
@@ -338,6 +445,7 @@ if not JOIN_EXISTING_OBJECTIVE:
 
 def main():
     while True:
+        crawler = ooba_web.Crawler()
         # As long as there are tasks in the storage...
         if not tasks_storage.is_empty():
             # Print the task list
@@ -350,8 +458,28 @@ def main():
             print("\033[92m\033[1m" + "\n*****NEXT TASK*****\n" + "\033[0m\033[0m")
             print(task['task_name'])
 
-            # Send to execution function to complete the task based on the context
-            result = execution_agent(OBJECTIVE, task["task_name"])            
+            result = execution_agent(OBJECTIVE, task["task_name"])
+            
+            search_required = ooba_web.check_for_search(result)
+            if search_required:
+                search_strings = ooba_web.get_search_strings(result)
+                complete_search_results = []
+                for search_string in search_strings:
+                    search_results = crawler.ddg_search(search_string[0], num_results=4)
+                    if len(search_results) > 0:
+                        result_search = search_agent(task["task_name"], search_string[0], search_results)
+                        ind_str = re.findall(r'\d+', result_search)
+                        if len(ind_str) > 0:
+                            try:
+                                ind = int(ind_str[0]) - 1
+                                selected_search_page = search_results[ind]
+                                crawl_data = crawler.crawl(selected_search_page['url'])
+                                result_search_agent = search_extract_agent(task['task_name'], search_string[0], crawl_data)
+                                complete_search_results.append((search_string[0], result_search_agent))
+                            except IndexError:
+                                print("Index not found in search results.")
+
+                result = updated_result_agent(task["task_name"], result, complete_search_results)
 
             print("\033[93m\033[1m" + "\n*****TASK RESULT*****\n" + "\033[0m\033[0m")
             print(result)
@@ -360,7 +488,7 @@ def main():
             # This is where you should enrich the result if needed
             enriched_result = {
                 "data": result
-            }  
+            }
             # extract the actual result from the dictionary
             # since we don't do enrichment currently
             vector = enriched_result["data"]  
