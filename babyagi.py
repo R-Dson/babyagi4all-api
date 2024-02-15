@@ -220,20 +220,38 @@ def fix_prompt(prompt: str) -> str:
 
 def task_creation_agent(
     objective: str, result: Dict, task_description: str, task_list: List[str]
-):    
-    prompt = f"""
+) -> tuple[list[dict], bool]:    
+    """prompt = f
     Your objective is: {objective}\n
     You have already completed these tasks, do not repeat them: {task_list if task_list else "None"}\n
     The last task you completed has the result: {result["data"]}\n
     Based on this result and the tasks already completed, please create a list of remaining essential tasks to complete for the purpose of attaining your objective.\n
     Respond with the task list as a numbered list. Don't say anything else. No unnecessary steps. \nResponse:"""
-
+    completed = False
+    prompt = f"""
+    Your objective is: {objective}\n
+    You have already completed these tasks, do not repeat them: {task_list}\n
+    The last task you completed has the result: {result["data"]}\n
+    Based on the tasks already completed and this result, please create a list of remaining essential tasks to complete for the purpose of attaining your objective.\n
+    If you believe there are more tasks that need completion, respond with the task list as a numbered list.\n
+    """
+    if len(task_list) > 0:
+        prompt += "Or If you believe you have completed all necessary tasks to achieve the objective, respond with 'Objective completed.' and nothing else. Never respond with both a list and with 'Objective completed'. \n"
+    prompt += """
+    Avoid unnecessary steps.\n
+    Response:"""
+    
     prompt = fix_prompt(prompt)
 
     response = ooba_call(prompt)
     pos = response.find("1")
     if (pos > 0):
         response = response[pos - 1:]
+    
+    if 'Objective completed'.lower() in response.lower():
+        response = response.replace('Objective completed.', '')
+        #print(f"Objective complete with reasoning: \n{response}")
+        completed = True
 
     if response == '':
         print("\n*** Empty Response from task_creation_agent***")
@@ -242,7 +260,7 @@ def task_creation_agent(
         new_tasks = response.split("\n") if "\n" in response else [response]
         new_tasks_list = strip_numbered_list(new_tasks)
         
-    return [{"task_name": task_name} for task_name in (t for t in new_tasks_list if not t == '')]
+    return [{"task_name": task_name} for task_name in (t for t in new_tasks_list if not t == '')], completed
 
 
 def prioritization_agent():
@@ -326,7 +344,7 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
             {"You have already completed the following tasks, take them into account as you complete the task but do not repeat them: " + str(context_list) if len(context_list)>0 else ""}
 
             1. Determine if the task involves fact checking or information gathering.
-            2. If the task involves facts, fact checking, or information gathering, respond with a newly generated search string for the task and place the string between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
+            2. If the task involves fact-checking, information gathering or any necessary actions, such as calculations or getting the current date, then respond with a newly generated search string for the task and place the string between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
             3. If the task does not involve fact checking or information gathering, respond with the completed task.
 
             Do not ask any clarifying questions. Do not clarify your reasoning.
@@ -336,7 +354,7 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
     prompt = fix_prompt(prompt)
     result = ooba_call(prompt, history)
 
-    if task == OBJECTIVE_SPLIT_TASK:
+    if result and task == OBJECTIVE_SPLIT_TASK:
         pos = result.find("1")
         if (pos > 0):
             result = result[pos - 1:]
@@ -446,6 +464,7 @@ if not JOIN_EXISTING_OBJECTIVE:
 def main():
     while True:
         crawler = ooba_web.Crawler()
+        was_search_used = False
         # As long as there are tasks in the storage...
         if not tasks_storage.is_empty():
             # Print the task list
@@ -459,6 +478,9 @@ def main():
             print(task['task_name'])
 
             result = execution_agent(OBJECTIVE, task["task_name"])
+            if not result:
+                print('Error occoured. Check if model is loaded.')
+                break
             
             search_required = ooba_web.check_for_search(result)
             if search_required:
@@ -469,15 +491,18 @@ def main():
                     if len(search_results) > 0:
                         result_search = search_agent(task["task_name"], search_string[0], search_results)
                         ind_str = re.findall(r'\d+', result_search)
-                        if len(ind_str) > 0:
-                            try:
-                                ind = int(ind_str[0]) - 1
-                                selected_search_page = search_results[ind]
-                                crawl_data = crawler.crawl(selected_search_page['url'])
-                                result_search_agent = search_extract_agent(task['task_name'], search_string[0], crawl_data)
-                                complete_search_results.append((search_string[0], result_search_agent))
-                            except IndexError:
-                                print("Index not found in search results.")
+                        
+                        if len(ind_str) == 0:
+                            continue
+                        ind = int(ind_str[0]) - 1
+                        if len(search_results) < ind:
+                            continue
+
+                        selected_search_page = search_results[ind]
+                        print(f"Fetching data About: {search_string[0]}.\nURL: {selected_search_page['url']}.")
+                        crawl_data = crawler.crawl(selected_search_page['url'])
+                        result_search_agent = search_extract_agent(task['task_name'], search_string[0], crawl_data)
+                        complete_search_results.append((search_string[0], result_search_agent))
 
                 result = updated_result_agent(task["task_name"], result, complete_search_results)
 
@@ -498,12 +523,17 @@ def main():
 
             # Step 3: Create new tasks and reprioritize task list
             # only the main instance in cooperative mode does that
-            new_tasks = task_creation_agent(
+            new_tasks, completed = task_creation_agent(
                 OBJECTIVE,
                 enriched_result,
                 task["task_name"],
                 tasks_storage.get_task_names(),
             )
+
+            if completed:
+                if was_search_used:
+                    print('\nThe model did not search for any information online.')
+                break
 
             for new_task in new_tasks:
                 if not new_task['task_name'] == '':

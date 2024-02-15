@@ -4,3 +4,7 @@ pre-commit>=3.2.0
 python-dotenv==1.0.0
 InstructorEmbedding>=1.0.0
 requests
+duckduckgo-search==4.4.3
+selenium==4.17.2
+textblob==0.17.1
+beautifulsoup4==4.12.3

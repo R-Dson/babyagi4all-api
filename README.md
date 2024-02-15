@@ -3,7 +3,7 @@
 A small autonomous AI agent based on [BabyAGI](https://github.com/yoheinakajima/babyagi) by Yohei Nakajima.
 </br>
 
-Originally made to work with GPT4ALL on CPU by kroll-software [here](https://github.com/kroll-software/babyagi4all). This is a small fork to make it compatible with the API from [oobabooga's web interface](https://github.com/oobabooga/text-generation-webui).
+Originally made to work with GPT4ALL on CPU by kroll-software [here](https://github.com/kroll-software/babyagi4all). This is a small fork of a small fork to make it compatible with the API from [oobabooga's web interface](https://github.com/oobabooga/text-generation-webui) and some online searching.
 </br>
 
 100% open source, 100% local, no API-keys needed.
