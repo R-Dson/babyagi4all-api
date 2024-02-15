@@ -501,6 +501,8 @@ def main():
                         selected_search_page = search_results[ind]
                         print(f"Fetching data About: {search_string[0]}.\nURL: {selected_search_page['url']}.")
                         crawl_data = crawler.crawl(selected_search_page['url'])
+                        if not crawl_data:
+                            continue
                         result_search_agent = search_extract_agent(task['task_name'], search_string[0], crawl_data)
                         complete_search_results.append((search_string[0], result_search_agent))
 
