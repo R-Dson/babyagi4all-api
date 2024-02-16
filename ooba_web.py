@@ -8,7 +8,7 @@ from itertools import islice
 from textblob import TextBlob
 
 
-# This code uses parts from https://github.com/Significant-Gravitas/AutoGPT/blob/master/autogpts/autogpt/autogpt/commands/web_search.py
+# This code uses parts from https://github.com/Significant-Gravitas/AutoGPT
 
 SEARCH_START = '[SEARCH]'.lower()
 SEARCH_END = '[SEARCH_END]'.lower()
@@ -51,7 +51,7 @@ class Crawler:
         max_length = 250 # TODO find max length
         results = DDGS().text(query[:max_length])
         search_results = list(islice(results, num_results))
-
+        search_results = [r for r in search_results if not '.pdf' in r["href"]]
         search_results = [
             {
                 "title": r["title"],
@@ -69,11 +69,12 @@ class Crawler:
             element.decompose()
     
     def extract_text(self, soup):
-        text = soup.get_text('\n', strip=True)
-        text = TextBlob(text).string
-        text = re.sub(r'[^\w\s.-]', '', text)  # Simplified regex
-        text = re.sub(r'([A-Z])', r' \1', text)
-        text = re.sub('\s+', ' ', text)
+        text = soup.get_text()
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = "\n".join(chunk for chunk in chunks if chunk)
+        text = re.sub(r'[^\w\s.-]', '', text)
+        text = re.sub(r'(?!\n)\s+', ' ', text)
         return text.strip()
 
     def crawl(self, url: str):

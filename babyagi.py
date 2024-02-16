@@ -30,8 +30,14 @@ MAX_TASKS = int(os.getenv("MAX_TASKS", 10))
 VERBOSE = (os.getenv("VERBOSE", "false").lower() == "true")
 CTX_MAX = 16384
 
-API_HOST = os.getenv("API_HOST")
-API_PORT = os.getenv("API_PORT")
+OOBA_API_HOST = os.getenv("OOBA_API_HOST")
+OOBA_API_PORT = os.getenv("OOBA_API_PORT")
+
+OLLAMA_API_HOST = os.getenv("OLLAMA_API_HOST")
+OLLAMA_API_PORT = os.getenv("OLLAMA_API_PORT")
+
+USE_OLLAMA = (os.getenv("USE_OLLAMA", "false").lower() == "true")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
 # Goal configuation
 OBJECTIVE = os.getenv("OBJECTIVE", "")
@@ -142,7 +148,7 @@ class SingleTaskListStorage:
 tasks_storage = SingleTaskListStorage()
 
 def ooba_call(prompt: str, history: list[dict] = []) -> str:
-    URI=f'{API_HOST}:{API_PORT}/v1/completions'
+    URI=f'{OOBA_API_HOST}:{OOBA_API_PORT}/v1/completions'
     
     request = {
         'prompt': prompt[:CTX_MAX],
@@ -166,8 +172,8 @@ def ooba_call(prompt: str, history: list[dict] = []) -> str:
         'stopping_strings': [],
         "max_tokens": MAX_NEW_TOKENS
     }
-    # TODO: Maybe use the /chat/completions instead to use preset and character?
 
+    # TODO: Maybe use the /chat/completions instead to use preset and character?
     """request = {
         "messages": history,
         'preset': 'simple-1',
@@ -182,13 +188,47 @@ def ooba_call(prompt: str, history: list[dict] = []) -> str:
     headers = {
         "Content-Type": "application/json"
     }
-    response = requests.post(URI, headers=headers, json=request)
+
+    try:
+        response = requests.post(URI, headers=headers, json=request)
+    except:
+        print('Something went wrong accessing api, is the server running and API enabled?')
+        return
 
     if response.status_code == 200:
-        c = response.json()
-        return c['choices'][0]['text']#['message']['content']
+        return response.json()['choices'][0]['text']#['message']['content']
     else:
         print("Something went wrong accessing api")
+
+def ollama_call(prompt: str) -> str:
+    URI=f'{OLLAMA_API_HOST}:{OLLAMA_API_PORT}/api/generate'
+    request = {
+        'prompt': prompt[:CTX_MAX],
+        'stream': False,
+        'model': OLLAMA_MODEL,
+        'options':{
+            'temperature': TEMPERATURE,
+            'top_p': 0.1,
+            'typical_p': 1,
+            'repeat_penalty': 1.18,
+            'top_k': 40,
+            'frequency_penalty': 1,
+            'num_ctx': CTX_MAX,
+            'num_predict': MAX_NEW_TOKENS
+        }
+    }
+
+    try:
+        response = requests.post(URI, json=request)
+    except:
+        print('Something went wrong accessing api, is Ollama running?')
+        return
+    
+    if response.status_code == 200:
+        return response.json()['response']
+    else:
+        print(f"Something went wrong accessing api. Error: {response.json()['error']}")
+
 
 def strip_numbered_list(nl: List[str]) -> List[str]:
     result_list = []
@@ -243,7 +283,10 @@ def task_creation_agent(
     
     prompt = fix_prompt(prompt)
 
-    response = ooba_call(prompt)
+    if USE_OLLAMA:
+        response = ollama_call(prompt)
+    else:
+        response = ooba_call(prompt)
     pos = response.find("1")
     if (pos > 0):
         response = response[pos - 1:]
@@ -286,7 +329,10 @@ def prioritization_agent():
     
     prompt = fix_prompt(prompt)
 
-    response = ooba_call(prompt)
+    if USE_OLLAMA:
+        response = ollama_call(prompt)
+    else:
+        response = ooba_call(prompt)
     pos = response.find("1")
     if (pos > 0):
         response = response[pos - 1:]
@@ -352,7 +398,10 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
             Response:
         """
     prompt = fix_prompt(prompt)
-    result = ooba_call(prompt, history)
+    if USE_OLLAMA:
+        result = ollama_call(prompt)
+    else:
+        result = ooba_call(prompt, history)
 
     if result and task == OBJECTIVE_SPLIT_TASK:
         pos = result.find("1")
@@ -379,6 +428,8 @@ def search_agent(task, query: str, search_results: list) -> str:
     prompt = ooba_web.safe_google_results(prompt)
     prompt = fix_prompt(prompt)
 
+    if USE_OLLAMA:
+        return ollama_call(prompt)
     return ooba_call(prompt)
 
 def search_extract_agent(task: str, search_query: str, block_text: str) -> str:
@@ -403,6 +454,8 @@ def search_extract_agent(task: str, search_query: str, block_text: str) -> str:
         Response:
     """
     prompt = fix_prompt(prompt)
+    if USE_OLLAMA:
+        return ollama_call(prompt)
     return ooba_call(prompt)
 
 def updated_result_agent(task: str, initial_answer: str, new_search_results: list[tuple]) -> str:
@@ -433,6 +486,8 @@ def updated_result_agent(task: str, initial_answer: str, new_search_results: lis
     Response:
     """
     prompt = fix_prompt(prompt)
+    if USE_OLLAMA:
+        return ollama_call(prompt)
     return ooba_call(prompt)
 
 # Get the top n completed tasks for the objective
