@@ -28,7 +28,7 @@ MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", 256))
 MAX_TASKS = int(os.getenv("MAX_TASKS", 10))
 
 VERBOSE = (os.getenv("VERBOSE", "false").lower() == "true")
-CTX_MAX = 16384
+CTX_MAX = int(os.getenv("MAX_NEW_TOKENS", 16384))
 
 OOBA_API_HOST = os.getenv("OOBA_API_HOST")
 OOBA_API_PORT = os.getenv("OOBA_API_PORT")
