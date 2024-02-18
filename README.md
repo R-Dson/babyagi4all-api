@@ -1,4 +1,4 @@
-# BabyAGI4All Using Oobabooga's Web Interface And Simple Online Searching 
+# BabyAGI4All Using Oobabooga's Web Interface Or Ollama With Simple Online Searching 
 
 A small autonomous AI agent based on [BabyAGI](https://github.com/yoheinakajima/babyagi) by Yohei Nakajima.
 </br>
