@@ -103,16 +103,8 @@ class DefaultResultsStorage:
             query_texts=query,
             n_results=min(top_results_num, count),
             include=["metadatas"]
-        )        
-        tasks = []
-        count = len(results["ids"][0])
-        for i in range(count):            
-            resultidstr = results["ids"][0][i]            
-            id = int(resultidstr[7:])
-            item = results["metadatas"][0][i]            
-            task = {'task_id': id, 'task_name': item["task"]}
-            tasks.append(task)            
-        return tasks
+        )
+        return [item["task"] for item in results["metadatas"][0]]
    
 
 # Initialize results storage
@@ -261,27 +253,36 @@ def fix_prompt(prompt: str) -> str:
 def task_creation_agent(
     objective: str, result: Dict, task_description: str, task_list: List[str]
 ) -> tuple[list[dict], bool]:    
-    """prompt = f
-    Your objective is: {objective}\n
-    You have already completed these tasks, do not repeat them: {task_list if task_list else "None"}\n
-    The last task you completed has the result: {result["data"]}\n
-    Based on this result and the tasks already completed, please create a list of remaining essential tasks to complete for the purpose of attaining your objective.\n
-    Respond with the task list as a numbered list. Don't say anything else. No unnecessary steps. \nResponse:"""
-    completed = False
+
     prompt = f"""
-    Your objective is: {objective}\n
-    You have already completed these tasks, do not repeat them: {task_list}\n
-    The last task you completed has the result: {result["data"]}\n
-    Based on the tasks already completed and this result, please create a list of remaining essential tasks to complete for the purpose of attaining your objective.\n
-    If you believe there are more tasks that need completion, respond with the task list as a numbered list.\n
-    """
+You are to use the result from an execution agent to create new tasks with the following objective: {objective}.
+The last completed task has the result: \n{result["data"]}
+This result was based on this task description: {task_description}.\n"""
+
     if len(task_list) > 0:
-        prompt += "Or If you believe you have completed all necessary tasks to achieve the objective, respond with 'Objective completed.' and nothing else. Never respond with both a list and with 'Objective completed'. \n"
+        prompt += f"These are incomplete tasks: {', '.join(task_list)}\n"
+    prompt += "Based on the result, return a list of tasks to be completed in order to meet the objective. "
+    if len(task_list) > 0:
+        prompt += "These new tasks must not overlap with incomplete tasks. "
+
     prompt += """
-    Avoid unnecessary steps.\n
-    Response:"""
+Return one task per line in your response. The result must be a numbered list in the format:
+
+#. First task
+#. Second task
+
+The number of each entry must be followed by a period. If your list is empty, write "There are no tasks to add at this time."
+Unless your list is empty, do not include any headers before your numbered list or follow your numbered list with any other output.
+"""
+    if len(task_list) > 0:
+        prompt += "Or if you believe you have completed all the necessary tasks to achieve the objective, respond with 'Objective completed.' and nothing else. Never respond with both a list and with 'Objective completed.'."
+    prompt += """
+Avoid unnecessary steps.\n
+Response:"""
     
     prompt = fix_prompt(prompt)
+
+    completed = False
 
     if USE_OLLAMA:
         response = ollama_call(prompt)
@@ -296,6 +297,19 @@ def task_creation_agent(
         #print(f"Objective complete with reasoning: \n{response}")
         completed = True
 
+    new_tasks = response.split('\n')
+    new_tasks_list = []
+    for task_string in new_tasks:
+        task_parts = task_string.strip().split(".", 1)
+        if len(task_parts) == 2:
+            task_id = ''.join(s for s in task_parts[0] if s.isnumeric())
+            task_name = re.sub(r'[^\w\s_]+', '', task_parts[1]).strip()
+            if task_name.strip() and task_id.isnumeric():
+                new_tasks_list.append(task_name)
+            # print('New task created: ' + task_name)
+
+    out = [{"task_name": task_name} for task_name in new_tasks_list]
+    return out, completed
     if response == '':
         print("\n*** Empty Response from task_creation_agent***")
         new_tasks_list = result["data"].split("\n") if len(result) > 0 else [response]
@@ -308,46 +322,42 @@ def task_creation_agent(
 
 def prioritization_agent():
     task_names = tasks_storage.get_task_names()
-    next_task_id = tasks_storage.next_task_id()    
+    bullet_string = '\n'
 
     prompt = f"""
-        Your ultimate objective is: {OBJECTIVE}
+You are tasked with prioritizing the following tasks: {bullet_string + bullet_string.join(task_names)}
+Consider the ultimate objective of your team: {OBJECTIVE}.
+Tasks should be sorted from highest to lowest priority, where higher-priority tasks are those that act as pre-requisites or are more essential for meeting the objective.
+Do not remove any tasks. Return the ranked tasks as a numbered list in the format:
 
-        To achieve this objective, you have the following tasks to complete: {task_names}
+#. First task
+#. Second task
 
-        Take this task list and perform the following actions:
+The entries must be consecutively numbered, starting with 1. The number of each entry must be followed by a period.
+Do not include any headers before your ranked list or follow your list with any other output."""
 
-        1. Reorder the task list so that tasks that need to be completed before other tasks come first.
-        2. Summarize each item in the reordered task list.
-        3. Consolidate the reordered, summarized task list so that there are no repeated tasks and so that there are at most {MAX_TASKS} tasks in the list.
-        4. Respond with the reordered, summarized, consolidated task list as a numbered list.
-
-        Please provide the revised task list as a numbered list. Do not include any additional information.
-
-        Response:
-    """
-    
-    prompt = fix_prompt(prompt)
-
+    #print(f'\n****TASK PRIORITIZATION AGENT PROMPT****\n{prompt}\n')
     if USE_OLLAMA:
         response = ollama_call(prompt)
     else:
         response = ooba_call(prompt)
-    pos = response.find("1")
-    if (pos > 0):
-        response = response[pos - 1:]
-
+    #print(f'\n****TASK PRIORITIZATION AGENT RESPONSE****\n{response}\n')
+    if not response:
+        print('Received empty response from priotritization agent. Keeping task list unchanged.')
+        return
     new_tasks = response.split("\n") if "\n" in response else [response]
-    new_tasks = strip_numbered_list(new_tasks)
     new_tasks_list = []
-    i = 0
-    for task_string in new_tasks:        
-        new_tasks_list.append({"task_id": i + next_task_id, "task_name": task_string})
-        i += 1
-    
+    for task_string in new_tasks:
+        task_parts = task_string.strip().split(".", 1)
+        if len(task_parts) == 2:
+            task_id = ''.join(s for s in task_parts[0] if s.isnumeric())
+            task_name = re.sub(r'[^\w\s_]+', '', task_parts[1]).strip()
+            if task_name.strip():
+                new_tasks_list.append({"task_id": task_id, "task_name": task_name})
+
     if len(new_tasks_list) > 0:
         tasks_storage.replace(new_tasks_list)
-
+    return
 
 # Execute a task based on the objective and five previous tasks
 def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
@@ -363,10 +373,7 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
 
     """
     
-    context = context_agent(query=objective, top_results_num=MAX_TASKS)
-
-    context_list = [t['task_name'] for t in context if t['task_name'] != OBJECTIVE_SPLIT_TASK]
-    #context_list = [t['task_name'] for t in context]
+    context_list = context_agent(query=objective, top_results_num=MAX_TASKS)
 
     # remove duplicates
     context_list = list(set(context_list))    
@@ -387,9 +394,13 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
 
             Your current task is: {task}
 
-            {"You have already completed the following tasks, take them into account as you complete the task but do not repeat them: " + str(context_list) if len(context_list)>0 else ""}
+            """ 
+        if len(context_list) > 0:
+            prompt += "You have already completed the following tasks, take them into account as you complete the task but do not repeat them: " + '\n'.join(context_list)
+        
+        prompt += f"""
 
-            1. Determine if the task involves fact checking or information gathering.
+            1. Determine if the task involves fact checking or information gathering. Option 2 is prefered over 3. 
             2. If the task involves fact-checking, information gathering or any necessary actions, such as calculations or getting the current date, then respond with a newly generated search string for the task and place the string between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
             3. If the task does not involve fact checking or information gathering, respond with the completed task.
 
@@ -411,7 +422,7 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
 
 def search_agent(task, query: str, search_results: list) -> str:
     """
-    TODO
+    TODO: Comment
     """
 
     prompt = (
