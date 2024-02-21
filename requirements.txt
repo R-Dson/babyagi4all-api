@@ -8,3 +8,4 @@ duckduckgo-search==4.4.3
 selenium==4.17.2
 textblob==0.17.1
 beautifulsoup4==4.12.3
+sentence-transformers==2.2.2
