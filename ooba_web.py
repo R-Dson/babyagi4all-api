@@ -49,8 +49,7 @@ class Crawler:
 
     def ddg_search(self, query: str, num_results: int = 8):
         max_length = 250 # TODO find max length
-        results = DDGS().text(query[:max_length])
-        search_results = list(islice(results, num_results))
+        search_results = DDGS().text(query[:max_length], max_results=num_results)
         search_results = [r for r in search_results if not '.pdf' in r["href"]]
         search_results = [
             {
@@ -128,6 +127,6 @@ def safe_google_results(results: str | list) -> str:
 
 if __name__ == "__main__":
     c = Crawler()
-    r = c.ddg_search("Path of Exile", num_results=2)
+    r = c.ddg_search("", num_results=2)
     
     print(r)
