@@ -24,11 +24,11 @@ JOIN_EXISTING_OBJECTIVE = False
 
 # Model configuration
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.2))
-MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", 256))
+MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", 4096))
 MAX_TASKS = int(os.getenv("MAX_TASKS", 10))
 
 VERBOSE = (os.getenv("VERBOSE", "false").lower() == "true")
-CTX_MAX = int(os.getenv("MAX_NEW_TOKENS", 16384))
+CTX_MAX = int(os.getenv("CTX_MAX", 4096))
 
 OOBA_API_HOST = os.getenv("OOBA_API_HOST")
 OOBA_API_PORT = os.getenv("OOBA_API_PORT")
@@ -41,8 +41,8 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
 # Goal configuation
 OBJECTIVE = os.getenv("OBJECTIVE", "")
-OBJECTIVE_SPLIT_TASK = f"""Develop a concise list of essential tasks to complete in order to attain the objective."""
-#OBJECTIVE_SPLIT_TASK = f"Develop a list of essential tasks to complete in order to attain the objective. Ensure each task contributes directly to achieving the objective and that the list is as concise as possible."
+#OBJECTIVE_SPLIT_TASK = f"""Develop a concise list of essential tasks to complete in order to attain the objective."""
+OBJECTIVE_SPLIT_TASK = f"Develop a list of essential tasks to complete in order to attain the objective. Ensure each task contributes directly to achieving the objective and that the list is as concise as possible."
 
 print("\033[95m\033[1m"+"\n*****CONFIGURATION*****\n"+"\033[0m\033[0m")
 print(f"Name  : {INSTANCE_NAME}")
@@ -202,7 +202,8 @@ def ollama_call(prompt: str) -> str:
             'frequency_penalty': 1,
             'num_ctx': CTX_MAX,
             'num_predict': MAX_NEW_TOKENS
-        }
+        },
+        'system': 'You are a assistant who researches a question or objective. Answer as concise as possible.'
     }
 
     try:
@@ -212,7 +213,7 @@ def ollama_call(prompt: str) -> str:
         return
     
     if response.status_code == 200:
-        return response.json()['response']
+        return response.json()['response'].replace('<|im_end|>', '')
     else:
         print(f"Something went wrong accessing api. Error: {response.json()['error']}")
 
@@ -247,7 +248,7 @@ def fix_prompt(prompt: str) -> str:
 
 def task_creation_agent(
     objective: str, result: Dict, task_description: str, task_list: List[str]
-) -> tuple[list[dict], bool]:    
+) -> list[dict]:    
 
     prompt = f"""
 You are to use the result from an execution agent to create new tasks with the following objective: {objective}.
@@ -269,15 +270,11 @@ Return one task per line in your response. The result must be a numbered list in
 The number of each entry must be followed by a period. If your list is empty, write "There are no tasks to add at this time."
 Unless your list is empty, do not include any headers before your numbered list or follow your numbered list with any other output.
 """
-    if len(task_list) > 0:
-        prompt += "Or if you believe you have completed all the necessary tasks to achieve the objective, respond with 'Objective completed.' and nothing else. Never respond with both a list and with 'Objective completed.'."
     prompt += """
 Avoid unnecessary steps.\n
 Response:"""
     
     prompt = fix_prompt(prompt)
-
-    completed = False
 
     if USE_OLLAMA:
         response = ollama_call(prompt)
@@ -286,11 +283,6 @@ Response:"""
     pos = response.find("1")
     if (pos > 0):
         response = response[pos - 1:]
-    
-    if 'Objective completed'.lower() in response.lower():
-        response = response.replace('Objective completed.', '')
-        #print(f"Objective complete with reasoning: \n{response}")
-        completed = True
 
     new_tasks = response.split('\n')
     new_tasks_list = []
@@ -304,7 +296,7 @@ Response:"""
             # print('New task created: ' + task_name)
 
     out = [{"task_name": task_name} for task_name in new_tasks_list]
-    return out, completed
+    return out
     if response == '':
         print("\n*** Empty Response from task_creation_agent***")
         new_tasks_list = result["data"].split("\n") if len(result) > 0 else [response]
@@ -546,9 +538,10 @@ def main():
             search_required = ooba_web.check_for_search(result)
             if search_required:
                 search_strings = ooba_web.get_search_strings(result)
+                search_strings = [ollama_call(f'Context: {OBJECTIVE}\n\nProvide only one search query based on this text \n\nText: {sstring[0]} \n\nResponse:').replace('"', '') for sstring in search_strings]
                 complete_search_results = []
                 for search_string in search_strings:
-                    search_results = crawler.ddg_search(search_string[0], num_results=4)
+                    search_results = crawler.ddg_search(search_string, num_results=4)
                     if len(search_results) > 0:
                         result_search = search_agent(task["task_name"], search_string[0], search_results)
                         ind_str = re.findall(r'\d+', result_search)
@@ -560,14 +553,31 @@ def main():
                             continue
 
                         selected_search_page = search_results[ind]
-                        print(f"Fetching data About: {search_string[0]}.\nURL: {selected_search_page['url']}.")
+                        print(f"\nFetching data About: {search_string}.\nURL: {selected_search_page['url']}.")
                         crawl_data = crawler.crawl(selected_search_page['url'])
                         if not crawl_data:
                             continue
-                        result_search_agent = search_extract_agent(task['task_name'], search_string[0], crawl_data)
-                        complete_search_results.append((search_string[0], result_search_agent))
+                        result_search_agent = search_extract_agent(task['task_name'], search_string, crawl_data)
+                        complete_search_results.append((search_string, result_search_agent))
 
                 result = updated_result_agent(task["task_name"], result, complete_search_results)
+                check_completed = ollama_call(f"""Determine if the provided text is sufficient to answer the objective or question. Answer with either "No" or "Yes".
+                                              
+                        Objective or question: {OBJECTIVE}
+                        
+                        Text: {result}
+                                              
+                        Response:""")
+                if 'yes' in check_completed.lower():
+                    summary = ollama_call(f"""Summarize the key information from the given text that is relevant to answering the Objective or question. Provide a concise answer. 
+                                          
+                                          Objective or question: {OBJECTIVE}
+                                          
+                                          Text: {result}
+                                          
+                                          Response:""")
+                    print(f'---\nObjective: {OBJECTIVE}\n\nAnswer: {summary}\n---')
+                    return
 
             print("\033[93m\033[1m" + "\n*****TASK RESULT*****\n" + "\033[0m\033[0m")
             print(result)
@@ -586,17 +596,12 @@ def main():
 
             # Step 3: Create new tasks and reprioritize task list
             # only the main instance in cooperative mode does that
-            new_tasks, completed = task_creation_agent(
+            new_tasks = task_creation_agent(
                 OBJECTIVE,
                 enriched_result,
                 task["task_name"],
                 tasks_storage.get_task_names(),
             )
-
-            if completed:
-                if was_search_used:
-                    print('\nThe model did not search for any information online.')
-                break
 
             for new_task in new_tasks:
                 if not new_task['task_name'] == '':
