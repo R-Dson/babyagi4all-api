@@ -1,5 +1,5 @@
 argparse==1.4.0
-chromadb==0.3.21
+chromadb==0.4.6
 pre-commit>=3.2.0
 python-dotenv==1.0.0
 InstructorEmbedding>=1.0.0
@@ -9,3 +9,5 @@ selenium==4.17.2
 textblob==0.17.1
 beautifulsoup4==4.12.3
 sentence-transformers==2.2.2
+InstructorEmbedding>=1.0.0
+llama-cpp-python==0.1.43
