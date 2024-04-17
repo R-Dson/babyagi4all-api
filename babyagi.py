@@ -56,6 +56,15 @@ print(f"{OBJECTIVE}")
 if not JOIN_EXISTING_OBJECTIVE: print("\033[93m\033[1m" + "\nInitial task:" + "\033[0m\033[0m" + f" {OBJECTIVE_SPLIT_TASK}")
 else: print("\033[93m\033[1m" + f"\nJoining to help the objective" + "\033[0m\033[0m")
 
+SYSTEM = f"""You are an advanced AI assistant who researches a question or objective. 
+
+You are connected to the internet. Any search query you write which is wrapped in the between the start command token {ooba_web.SEARCH_START} and the end command {ooba_web.SEARCH_END} will get searched. 
+The output of the search will appear in the context window. 
+
+Answer as concise as possible."""
+
+SYSTEM_NO_SEARCH = 'You are an advanced AI assistant who researches a question or objective. Answer as concise as possible.'
+
 # Results storage using local ChromaDB
 class DefaultResultsStorage:
     def __init__(self):
@@ -187,7 +196,9 @@ def ooba_call(prompt: str, history: list[dict] = []) -> str:
     else:
         print("Something went wrong accessing api")
 
-def ollama_call(prompt: str) -> str:
+def ollama_call(prompt: str, system: str = None) -> str:
+    if system is None:
+        system = SYSTEM
     URI=f'{OLLAMA_API_HOST}:{OLLAMA_API_PORT}/api/generate'
     request = {
         'prompt': prompt[:CTX_MAX],
@@ -203,7 +214,7 @@ def ollama_call(prompt: str) -> str:
             'num_ctx': CTX_MAX,
             'num_predict': MAX_NEW_TOKENS
         },
-        'system': 'You are a assistant who researches a question or objective. Answer as concise as possible.'
+        'system': system
     }
 
     try:
@@ -267,7 +278,7 @@ Return one task per line in your response. The result must be a numbered list in
 #. First task
 #. Second task
 
-The number of each entry must be followed by a period. If your list is empty, write "There are no tasks to add at this time."
+The number of each entry must be followed by a period. 
 Unless your list is empty, do not include any headers before your numbered list or follow your numbered list with any other output.
 """
     prompt += """
@@ -277,7 +288,7 @@ Response:"""
     prompt = fix_prompt(prompt)
 
     if USE_OLLAMA:
-        response = ollama_call(prompt)
+        response = ollama_call(prompt, system=SYSTEM_NO_SEARCH)
     else:
         response = ooba_call(prompt)
     pos = response.find("1")
@@ -297,15 +308,6 @@ Response:"""
 
     out = [{"task_name": task_name} for task_name in new_tasks_list]
     return out
-    if response == '':
-        print("\n*** Empty Response from task_creation_agent***")
-        new_tasks_list = result["data"].split("\n") if len(result) > 0 else [response]
-    else:
-        new_tasks = response.split("\n") if "\n" in response else [response]
-        new_tasks_list = strip_numbered_list(new_tasks)
-        
-    return [{"task_name": task_name} for task_name in (t for t in new_tasks_list if not t == '')], completed
-
 
 def prioritization_agent():
     task_names = tasks_storage.get_task_names()
@@ -325,7 +327,7 @@ Do not include any headers before your ranked list or follow your list with any 
 
     #print(f'\n****TASK PRIORITIZATION AGENT PROMPT****\n{prompt}\n')
     if USE_OLLAMA:
-        response = ollama_call(prompt)
+        response = ollama_call(prompt, system=SYSTEM_NO_SEARCH)
     else:
         response = ooba_call(prompt)
     #print(f'\n****TASK PRIORITIZATION AGENT RESPONSE****\n{response}\n')
@@ -368,13 +370,14 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
     if VERBOSE and len(context_list) > 0:
         print("\n*******RELEVANT CONTEXT******\n")
         print(context_list)
-
+    
+    system = SYSTEM
     if task == OBJECTIVE_SPLIT_TASK:
         prompt = f"""
         Your objective is: {objective}\n
         Please complete the following task: {task}\n
         Do not ask any clarifying questions.\nResponse:"""
-        
+        system = SYSTEM_NO_SEARCH
     else:  
         prompt = f"""
             Your objective: {OBJECTIVE}
@@ -388,7 +391,7 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
         prompt += f"""
 
             1. Determine if the task involves fact checking or information gathering. Option 2 is prefered over 3. 
-            2. If the task involves fact-checking, information gathering or any necessary actions, such as calculations or getting the current date, then respond with a newly generated search string for the task and place the string between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
+            2. If the task involves fact-checking, information gathering or any necessary actions, such as calculations or getting the current date, then respond with a newly generated search string for the task between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
             3. If the task does not involve fact checking or information gathering, respond with the completed task.
 
             Do not ask any clarifying questions. Do not clarify your reasoning.
@@ -397,7 +400,7 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
         """
     prompt = fix_prompt(prompt)
     if USE_OLLAMA:
-        result = ollama_call(prompt)
+        result = ollama_call(prompt, system=system)
     else:
         result = ooba_call(prompt, history)
 
@@ -413,25 +416,31 @@ def search_agent(task, query: str, search_results: list) -> str:
     """
 
     prompt = (
-        f'Your current task is: "{task}".\n ## Search Results for: "{query}"\n'
-        "Please review the following search results carefully and select the index of the single webpage that best addresses the task."
-        "\n\n"
-    ) + "\n\n".join(
-        f"Index number: {r+1} \"{search_results[r]['title']}\"\n"
-        f"**URL:** {search_results[r]['url']}  \n"
-        f"Exerpt: {search_results[r]['exerpt']}\n"
+        f"""Your current task is: "{task}".
+        ## Search Results for: "{query}"
+
+        "Please examine the search results below and choose the index of the webpage that best suits the task.
+        
+        """) + "\n\n".join(
+        f"Index number: {r+1}\n"
+        f"**Title:** {search_results[r]['title']}\n"
+        f"**URL:** {search_results[r]['url']}\n"
+        f"**Exerpt:** {search_results[r]['exerpt']}\n"
         for r in range(len(search_results))
-    ) + "\n\nRespond with the index of the single webpage that best addresses the task:"
+    ) + """
+    
+    Please provide the index of the webpage that best meets the task's requirements. 
+    Response: """
 
     prompt = ooba_web.safe_google_results(prompt)
     prompt = fix_prompt(prompt)
 
     if USE_OLLAMA:
-        return ollama_call(prompt)
+        return ollama_call(prompt, system=SYSTEM_NO_SEARCH)
     return ooba_call(prompt)
 
 def search_extract_agent(task: str, search_query: str, block_text: str) -> str:
-    max_length = 400 # TODO: find a good max value
+    max_length = 250 # TODO: find a good max value
     prompt = f"""
         Objective: {OBJECTIVE}
 
@@ -453,7 +462,7 @@ def search_extract_agent(task: str, search_query: str, block_text: str) -> str:
     """
     prompt = fix_prompt(prompt)
     if USE_OLLAMA:
-        return ollama_call(prompt)
+        return ollama_call(prompt, system=SYSTEM_NO_SEARCH)
     return ooba_call(prompt)
 
 def updated_result_agent(task: str, initial_answer: str, new_search_results: list[tuple]) -> str:
@@ -517,7 +526,6 @@ if not JOIN_EXISTING_OBJECTIVE:
 def main():
     while True:
         crawler = ooba_web.Crawler()
-        was_search_used = False
         # As long as there are tasks in the storage...
         if not tasks_storage.is_empty():
             # Print the task list
@@ -538,9 +546,11 @@ def main():
             search_required = ooba_web.check_for_search(result)
             if search_required:
                 search_strings = ooba_web.get_search_strings(result)
-                search_strings = [ollama_call(f'Context: {OBJECTIVE}\n\nProvide only one search query based on this text \n\nText: {sstring[0]} \n\nResponse:').replace('"', '') for sstring in search_strings]
+                #search_strings = [ollama_call(f'Context: {OBJECTIVE}\n\nProvide only one search query based on this text \n\nText: {sstring[0]} \n\nResponse:', system=SYSTEM_NO_SEARCH).replace('"', '') for sstring in search_strings]
                 complete_search_results = []
                 for search_string in search_strings:
+                    if type(search_string) is tuple:
+                        search_string = search_string[0]
                     search_results = crawler.ddg_search(search_string, num_results=4)
                     if len(search_results) > 0:
                         result_search = search_agent(task["task_name"], search_string[0], search_results)
@@ -561,25 +571,19 @@ def main():
                         complete_search_results.append((search_string, result_search_agent))
 
                 result = updated_result_agent(task["task_name"], result, complete_search_results)
-                check_completed = ollama_call(f"""Determine if the provided text is sufficient to answer the objective or question. Answer with either "No" or "Yes".
-                                              
-                        Objective or question: {OBJECTIVE}
-                        
-                        Text: {result}
-                                              
-                        Response:""")
+                check_completed = ollama_call(f"""Assess whether the provided text adequately addresses the objective or question. Respond with either "No" if it does not sufficiently answer, or "Yes" if it does.
+
+                    Objective or question: {OBJECTIVE}
+
+                    Text: {result}
+
+                    Response:""", system=SYSTEM_NO_SEARCH)
                 if 'yes' in check_completed.lower():
-                    summary = ollama_call(f"""Summarize the key information from the given text that is relevant to answering the Objective or question. Provide a concise answer. 
-                                          
-                                          Objective or question: {OBJECTIVE}
-                                          
-                                          Text: {result}
-                                          
-                                          Response:""")
-                    print(f'---\nObjective: {OBJECTIVE}\n\nAnswer: {summary}\n---')
+                    print(f'---\nObjective: {OBJECTIVE}\n\nAnswer: {result}\n---')
                     return
 
             print("\033[93m\033[1m" + "\n*****TASK RESULT*****\n" + "\033[0m\033[0m")
+            result = result.replace(ooba_web.SEARCH_START, '').replace(ooba_web.SEARCH_START_LOWER, '').replace(ooba_web.SEARCH_END, '').replace(ooba_web.SEARCH_END_LOWER, '')
             print(result)
 
             # Step 2: Enrich result and store in the results storage

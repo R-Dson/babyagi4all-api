@@ -4,31 +4,32 @@ import json
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from duckduckgo_search import DDGS
-from itertools import islice
-from textblob import TextBlob
 
 
 # This code uses parts from https://github.com/Significant-Gravitas/AutoGPT
 
-SEARCH_START = '[SEARCH]'.lower()
-SEARCH_END = '[SEARCH_END]'.lower()
+SEARCH_START = '<|START_SEARCH_TOKEN|>'
+SEARCH_START_LOWER = '<|START_SEARCH_TOKEN|>'.lower()
+SEARCH_END = '<|END_SEARCH_TOKEN|>'
+SEARCH_END_LOWER = '<|END_SEARCH_TOKEN|>'.lower()
 
 def check_for_search(result: str) -> bool:
-    if SEARCH_START in result.lower() and SEARCH_END in result.lower():
+    if SEARCH_START_LOWER in result.lower() and SEARCH_END_LOWER in result.lower():
         return True
     return False
 
 def get_search_strings(result: str) -> list[tuple]:
     strings = []
-    ind_start = result.lower().find(SEARCH_START)
+    ind_start = result.lower().find(SEARCH_START_LOWER)
     while ind_start > -1:
-        ind_end = result.lower().find(SEARCH_END, ind_start)
+        ind_end = result.lower().find(SEARCH_END_LOWER, ind_start)
         if ind_end == -1:
             break
         mid_string = result[ind_start + len(SEARCH_START): ind_end]
         updated_string = result[:ind_start] + result[ind_end + len(SEARCH_END):]
         strings.append((mid_string.strip(), updated_string.strip()))
-        ind_start = result.lower().find(SEARCH_START, ind_end)
+        ind_start = result.lower().find(SEARCH_START_LOWER, ind_end)
+
     return strings
 
 class Crawler:
