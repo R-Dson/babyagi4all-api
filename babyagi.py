@@ -56,12 +56,14 @@ print(f"{OBJECTIVE}")
 if not JOIN_EXISTING_OBJECTIVE: print("\033[93m\033[1m" + "\nInitial task:" + "\033[0m\033[0m" + f" {OBJECTIVE_SPLIT_TASK}")
 else: print("\033[93m\033[1m" + f"\nJoining to help the objective" + "\033[0m\033[0m")
 
-SYSTEM = f"""You are an advanced AI assistant who researches a question or objective. 
+SYSTEM = f"""You are an advanced AI assistant designed to conduct research and answer questions efficiently. 
 
-You are connected to the internet. Any search query you write which is wrapped in the between the start command token {ooba_web.SEARCH_START} and the end command {ooba_web.SEARCH_END} will get searched. 
-The output of the search will appear in the context window. 
+When providing a search query, place it between the tokens {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}. 
+For example: {ooba_web.SEARCH_START}your search query{ooba_web.SEARCH_END}
 
-Answer as concise as possible."""
+Please avoid including URLs or specific site names in your query to broaden the search scope. 
+The search results will be displayed in the context window. 
+Please keep your queries concise for optimal results."""
 
 SYSTEM_NO_SEARCH = 'You are an advanced AI assistant who researches a question or objective. Answer as concise as possible.'
 
@@ -380,24 +382,26 @@ def execution_agent(objective: str, task: str, history: list[dict] = []) -> str:
         system = SYSTEM_NO_SEARCH
     else:  
         prompt = f"""
-            Your objective: {OBJECTIVE}
+        Your objective: {OBJECTIVE}
 
-            Your current task is: {task}
+        Your current task is: {task}
 
-            """ 
+        """ 
+
         if len(context_list) > 0:
-            prompt += "You have already completed the following tasks, take them into account as you complete the task but do not repeat them: " + '\n'.join(context_list)
-        
+            prompt += "You have already completed the following tasks, take them into account as you complete the task but do not repeat them:\n" + '\n'.join(context_list)
+
         prompt += f"""
 
-            1. Determine if the task involves fact checking or information gathering. Option 2 is prefered over 3. 
-            2. If the task involves fact-checking, information gathering or any necessary actions, such as calculations or getting the current date, then respond with a newly generated search string for the task between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
-            3. If the task does not involve fact checking or information gathering, respond with the completed task.
+        1. Determine if the task involves fact-checking or information gathering. Option 2 is preferred over 3.
+        2. If the task involves fact-checking, information gathering, or any necessary actions (such as calculations or getting the current date), respond with a newly generated search string for the task between {ooba_web.SEARCH_START} and {ooba_web.SEARCH_END}.
+        3. If the task does not involve fact-checking or information gathering, respond with the completed task.
 
-            Do not ask any clarifying questions. Do not clarify your reasoning.
+        Do not ask any clarifying questions. Do not clarify your reasoning.
 
-            Response:
+        Response:
         """
+        
     prompt = fix_prompt(prompt)
     if USE_OLLAMA:
         result = ollama_call(prompt, system=system)
@@ -430,7 +434,7 @@ def search_agent(task, query: str, search_results: list) -> str:
     ) + """
     
     Please provide the index of the webpage that best meets the task's requirements. 
-    Response: """
+    Response:"""
 
     prompt = ooba_web.safe_google_results(prompt)
     prompt = fix_prompt(prompt)
@@ -458,8 +462,7 @@ def search_extract_agent(task: str, search_query: str, block_text: str) -> str:
 
         Provide your response based on the extracted information:
 
-        Response:
-    """
+        Response:"""
     prompt = fix_prompt(prompt)
     if USE_OLLAMA:
         return ollama_call(prompt, system=SYSTEM_NO_SEARCH)
@@ -490,8 +493,7 @@ def updated_result_agent(task: str, initial_answer: str, new_search_results: lis
 
     Provide your response based on the updated information:
 
-    Response:
-    """
+    Response:"""
     prompt = fix_prompt(prompt)
     if USE_OLLAMA:
         return ollama_call(prompt)

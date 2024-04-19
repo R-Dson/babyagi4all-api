@@ -8,10 +8,11 @@ from duckduckgo_search import DDGS
 
 # This code uses parts from https://github.com/Significant-Gravitas/AutoGPT
 
-SEARCH_START = '<|START_SEARCH_TOKEN|>'
-SEARCH_START_LOWER = '<|START_SEARCH_TOKEN|>'.lower()
-SEARCH_END = '<|END_SEARCH_TOKEN|>'
-SEARCH_END_LOWER = '<|END_SEARCH_TOKEN|>'.lower()
+SEARCH_START = '[['
+SEARCH_END = ']]'
+
+SEARCH_START_LOWER = SEARCH_START.lower()
+SEARCH_END_LOWER = SEARCH_END.lower()
 
 def check_for_search(result: str) -> bool:
     if SEARCH_START_LOWER in result.lower() and SEARCH_END_LOWER in result.lower():
